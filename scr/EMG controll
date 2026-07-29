@@ -1,0 +1,81 @@
+/*
+ * EMG-Based Adaptive Speed Control of Electric Drive
+ * Development Phase: Potentiometer used as EMG signal simulator
+ * Target: Arduino UNO
+ */
+
+const int POT_PIN   = A0;   // Analog input from potentiometer
+const int PWM_PIN   = 9;    // PWM output to L298N ENA
+const int IN1_PIN   = 8;    // Motor direction control pin 1
+const int IN2_PIN   = 7;    // Motor direction control pin 2
+
+const int FILTER_WINDOW = 8;      // Number of samples for moving average
+int samples[FILTER_WINDOW];
+int sampleIndex = 0;
+
+int previousOutput = 0;           // Last PWM output value (for adaptive logic)
+const int CHANGE_THRESHOLD = 15;  // Threshold for adaptive response (0-255 scale)
+const float SLOW_ALPHA = 0.15;    // Smoothing factor for gradual changes
+const float FAST_ALPHA = 0.6;     // Smoothing factor for rapid/large changes
+
+void setup() {
+  pinMode(PWM_PIN, OUTPUT);
+  pinMode(IN1_PIN, OUTPUT);
+  pinMode(IN2_PIN, OUTPUT);
+
+  // Set fixed rotation direction (forward)
+  digitalWrite(IN1_PIN, HIGH);
+  digitalWrite(IN2_PIN, LOW);
+
+  // Initialize filter buffer
+  for (int i = 0; i < FILTER_WINDOW; i++) {
+    samples[i] = analogRead(POT_PIN);
+  }
+
+  Serial.begin(9600);
+}
+
+int readFilteredInput() {
+  samples[sampleIndex] = analogRead(POT_PIN);
+  sampleIndex = (sampleIndex + 1) % FILTER_WINDOW;
+
+  long sum = 0;
+  for (int i = 0; i < FILTER_WINDOW; i++) {
+    sum += samples[i];
+  }
+  return sum / FILTER_WINDOW;   // Returns 0-1023
+}
+
+int applyAdaptiveControl(int targetPWM) {
+  int diff = abs(targetPWM - previousOutput);
+  float alpha = (diff > CHANGE_THRESHOLD) ? FAST_ALPHA : SLOW_ALPHA;
+
+  int newOutput = previousOutput + (int)(alpha * (targetPWM - previousOutput));
+  previousOutput = newOutput;
+  return newOutput;
+}
+
+void loop() {
+  int rawValue = readFilteredInput();              // 0-1023
+int targetPWM = map(rawValue, 0, 1023, 0, 255);  // Map to PWM range
+
+int finalPWM = applyAdaptiveControl(targetPWM);
+finalPWM = constrain(finalPWM, 0, 255);
+
+// Stop motor completely at very low PWM values
+if (finalPWM < 25) {
+  finalPWM = 0;
+}
+
+analogWrite(PWM_PIN, finalPWM);
+
+  // Debug output for testing / data logging (used in Chapter 5)
+  Serial.print("Raw: ");
+  Serial.print(rawValue);
+  Serial.print("  Target PWM: ");
+  Serial.print(targetPWM);
+  Serial.print("  Adaptive PWM: ");
+  Serial.println(finalPWM);
+
+  delay(20);   // ~50 Hz sampling rate
+}
